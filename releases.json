@@ -1,10 +1,10 @@
 {
   "plugins": {
     "exteragram_diagnostics": {
-      "sha256": "8adc6f0d5b941c952f6aa0b0d7802c6a6c3e20cb0f002311471c891bbba5f7c1",
-      "size": 111289,
-      "url": "https://raw.githubusercontent.com/Darkichyoyo/exteragram-plugin-releases/main/plugins/exteragram_diagnostics/0.4.0/exteragram_diagnostics.plugin",
-      "version": "0.4.0"
+      "sha256": "3f216a81893709f9240774f6cb7ea3fc6e543b942511acb2d2f41d54162d2c64",
+      "size": 111839,
+      "url": "https://raw.githubusercontent.com/Darkichyoyo/exteragram-plugin-releases/main/plugins/exteragram_diagnostics/0.4.1/exteragram_diagnostics.plugin",
+      "version": "0.4.1"
     }
   },
   "schema": 1
