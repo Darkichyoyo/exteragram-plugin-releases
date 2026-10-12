@@ -7,10 +7,10 @@
       "version": "0.5.3"
     },
     "multi_tools": {
-      "sha256": "756fb7457202df9a183c5a1af0aee107aae764d0e189b4852913e1867675d028",
-      "size": 198070,
-      "url": "https://raw.githubusercontent.com/Darkichyoyo/exteragram-plugin-releases/main/plugins/multi_tools/3.0.4/multi_tools.plugin",
-      "version": "3.0.4"
+      "sha256": "6e330376cf7940aef4b157f426c2aacb1f3c7aae8d92f83317ca471fe5ba7752",
+      "size": 222305,
+      "url": "https://raw.githubusercontent.com/Darkichyoyo/exteragram-plugin-releases/main/plugins/multi_tools/3.0.9/multi_tools.plugin",
+      "version": "3.0.9"
     }
   },
   "schema": 1
