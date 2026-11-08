@@ -5077,7 +5077,7 @@ class MultiToolsPlugin(BasePlugin):
 
     def _mt_hero_create(self, context, list_view, current_account, class_guid, resources_provider):
         try:
-            from android.widget import LinearLayout, TextView
+            from android.widget import FrameLayout, LinearLayout, TextView
             from android.view import Gravity
             dp = self._dm_dp
             root = LinearLayout(context)
@@ -5085,19 +5085,29 @@ class MultiToolsPlugin(BasePlugin):
             root.setGravity(Gravity.CENTER_HORIZONTAL)
             root.setPadding(dp(16), dp(22), dp(16), dp(20))
             root.setBackgroundColor(self._dm_theme("key_windowBackgroundWhite", 0xFFFFFFFF))
-            for size, top in ((54.0, 0), (21.0, 10), (14.0, 3), (13.0, 14)):
+            box = FrameLayout(context)
+            emoji = TextView(context)
+            emoji.setText("🧰")
+            emoji.setTextSize(54.0)
+            emoji.setGravity(Gravity.CENTER)
+            box.addView(emoji, FrameLayout.LayoutParams(-1, -1))
+            try:
+                from org.telegram.ui.Components import BackupImageView
+                box.addView(BackupImageView(context), FrameLayout.LayoutParams(-1, -1))
+            except Exception:
+                pass
+            root.addView(box, LinearLayout.LayoutParams(dp(100), dp(100)))
+            for size, top in ((21.0, 12), (14.0, 3), (13.0, 14)):
                 label = TextView(context)
                 label.setTextSize(size)
                 label.setGravity(Gravity.CENTER)
                 params = LinearLayout.LayoutParams(-2, -2)
                 params.topMargin = dp(top)
                 root.addView(label, params)
-            emoji, title, subtitle, badge = (root.getChildAt(index) for index in range(4))
-            emoji.setText("🧰")
+            title, subtitle, badge = root.getChildAt(1), root.getChildAt(2), root.getChildAt(3)
             title.setText("MultiTools")
             title.setTypeface(self._mt_bold())
             title.setTextColor(self._dm_theme("key_windowBackgroundWhiteBlackText", 0xFF222222))
-            subtitle.setText("Версия %s" % __version__)
             subtitle.setTextColor(self._dm_theme("key_windowBackgroundWhiteGrayText", 0xFF8A8A8A))
             badge.setPadding(dp(12), dp(5), dp(12), dp(5))
             badge.setTypeface(self._mt_bold())
@@ -5113,15 +5123,17 @@ class MultiToolsPlugin(BasePlugin):
             pass
 
     def _mt_hero_fill(self, root):
+        from android.view import View
         from android.graphics.drawable import GradientDrawable
-        badge = root.getChildAt(3)
+        box, subtitle, badge = root.getChildAt(0), root.getChildAt(2), root.getChildAt(3)
+        subtitle.setText("Версия %s" % __version__)
         level, text = self._mt_status()
         if level == "ok":
             color = self._mt_color(("key_windowBackgroundWhiteGreenText", "key_windowBackgroundWhiteGreenText2"), 0xFF26A65B)
-            text = "\u2713  " + text
+            text = "✓  " + text
         elif level == "warn":
             color = self._mt_color(("key_text_RedRegular", "key_windowBackgroundWhiteRedText", "key_dialogTextRed"), 0xFFE53935)
-            text = "\u26a0  " + text
+            text = "⚠  " + text
         else:
             color = self._mt_color(("key_windowBackgroundWhiteGrayText",), 0xFF8A8A8A)
         badge.setText(text)
@@ -5130,6 +5142,20 @@ class MultiToolsPlugin(BasePlugin):
         background.setCornerRadius(float(self._dm_dp(14)))
         background.setColor((int(color) & 0x00FFFFFF) | 0x22000000)
         badge.setBackground(background)
+        image = box.getChildAt(1) if int(box.getChildCount()) > 1 else None
+        shown = False
+        if image is not None and not getattr(self, "_mt_no_sticker", False):
+            try:
+                from org.telegram.messenger import MediaDataController
+                name, _sep, index = __icon__.partition("/")
+                MediaDataController.getInstance(UserConfig.selectedAccount).setPlaceholderImageByIndex(
+                    image, name, int(index or 0), "100_100")
+                shown = True
+            except Exception:
+                self._mt_no_sticker = True
+        if image is not None:
+            image.setVisibility(View.VISIBLE if shown else View.GONE)
+        box.getChildAt(0).setVisibility(View.GONE if shown else View.VISIBLE)
 
     @staticmethod
     def _mt_color(keys, fallback):
