@@ -13,8 +13,8 @@
       "version": "3.2"
     },
     "virtual_premium_reactions": {
-      "sha256": "92ba84f05e4748bf5e34aefaeff82b9ea1d3b139b9e1fc902b9e4407fda5edbd",
-      "size": 177950,
+      "sha256": "7531a11368d46c73a5d749a0e654caabaf12358d5bd54a46ee62fde31b6b289b",
+      "size": 179895,
       "url": "https://raw.githubusercontent.com/Darkichyoyo/exteragram-plugin-releases/main/plugins/virtual_premium_reactions/4.0/virtual_premium_reactions.plugin",
       "version": "4.0"
     }

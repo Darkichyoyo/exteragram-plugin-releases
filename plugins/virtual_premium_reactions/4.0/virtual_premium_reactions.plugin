@@ -897,6 +897,22 @@ class _ReactionsRenderHook(MethodHook):
     def after_hooked_method(self, param):
         self.plugin._sync_render(param)
 
+class _ReactionPreviewHook(MethodHook):
+    def __init__(self, plugin: "VirtualPremiumReactionsPlugin"):
+        self.plugin = plugin
+
+    def before_hooked_method(self, param):
+        try:
+            self.plugin._preview_before(param)
+        except Exception:
+            pass
+
+    def after_hooked_method(self, param):
+        try:
+            self.plugin._preview_after()
+        except Exception:
+            pass
+
 class _PickerHook(MethodHook):
     def __init__(self, plugin: "VirtualPremiumReactionsPlugin"):
         self.plugin = plugin
@@ -994,6 +1010,8 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
         self._picker_hooks = set()
         self._sync = None
         self._sync_latest = {}
+        self._preview_vr = None
+        self._preview_swap = None
 
         self._sync_seq = 0
         self._vpr_background = False
@@ -1043,6 +1061,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
         for name, method, hook in (
             ("org.telegram.ui.ChatActivity", "selectReaction", _SelectReactionHook(self)),
             ("org.telegram.ui.Components.Reactions.ReactionsLayoutInBubble", "setMessage", _ReactionsRenderHook(self)),
+            ("org.telegram.ui.Components.Reactions.ReactionsLayoutInBubble$ReactionButton", "attachPreview", _ReactionPreviewHook(self)),
         ):
             try:
                 clazz = find_class(name)
@@ -1369,6 +1388,42 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
                 pass
             raise
         return True
+
+    def _preview_before(self, param):
+        self._preview_after()
+        button = param.thisObject
+        if button is None or button.previewImageReceiver is not None or button.previewAnimatedEmojiDrawable is not None:
+            return
+        drawable = button.animatedEmojiDrawable
+        if drawable is None:
+            return
+        doc = int(drawable.getDocumentId())
+        if not doc:
+            return
+        field = self._preview_vr
+        if field is None:
+            clazz = button.getClass()
+            while clazz is not None and field is None:
+                try:
+                    field = clazz.getDeclaredField('visibleReaction')
+                except Exception:
+                    clazz = clazz.getSuperclass()
+            if field is None:
+                return
+            field.setAccessible(True)
+            self._preview_vr = field
+        visible = field.get(button)
+        if visible is None or visible.emojicon is None:
+            return
+        field.set(button, ReactionsLayoutInBubble.VisibleReaction.fromCustomEmoji(Long(doc)))
+        self._preview_swap = (button, visible)
+
+    def _preview_after(self):
+        swap = self._preview_swap
+        if swap is None:
+            return
+        self._preview_swap = None
+        self._preview_vr.set(swap[0], swap[1])
 
     def _sync_render_group(self, button_list, entries, account, mid):
         by_fallback = {}
