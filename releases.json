@@ -11,6 +11,12 @@
       "size": 392650,
       "url": "https://raw.githubusercontent.com/Darkichyoyo/exteragram-plugin-releases/main/plugins/multi_tools/3.2/multi_tools.plugin",
       "version": "3.2"
+    },
+    "virtual_premium_reactions": {
+      "sha256": "92ba84f05e4748bf5e34aefaeff82b9ea1d3b139b9e1fc902b9e4407fda5edbd",
+      "size": 177950,
+      "url": "https://raw.githubusercontent.com/Darkichyoyo/exteragram-plugin-releases/main/plugins/virtual_premium_reactions/4.0/virtual_premium_reactions.plugin",
+      "version": "4.0"
     }
   },
   "schema": 1
