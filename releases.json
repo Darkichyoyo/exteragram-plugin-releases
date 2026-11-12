@@ -13,10 +13,10 @@
       "version": "3.2"
     },
     "virtual_premium_reactions": {
-      "sha256": "0599f15d9ad9a500c0674933c08830d6c74c26a962c1e7350f87a6b6c4d00a1c",
-      "size": 235902,
-      "url": "https://raw.githubusercontent.com/Darkichyoyo/exteragram-plugin-releases/main/plugins/virtual_premium_reactions/4.1/virtual_premium_reactions.plugin",
-      "version": "4.1"
+      "sha256": "53f8b9be468175f84fce493be68384fc21579eb6c477b189e12c28a050657b63",
+      "size": 243838,
+      "url": "https://raw.githubusercontent.com/Darkichyoyo/exteragram-plugin-releases/main/plugins/virtual_premium_reactions/4.1.1/virtual_premium_reactions.plugin",
+      "version": "4.1.1"
     }
   },
   "schema": 1

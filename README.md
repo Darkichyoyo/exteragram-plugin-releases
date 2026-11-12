@@ -8,7 +8,7 @@
 |---|---|---|
 | ExteraGram Diagnostics | 0.5.3 | [`exteragram_diagnostics.plugin`](plugins/exteragram_diagnostics/0.5.3/exteragram_diagnostics.plugin) |
 | MultiTools | 3.2 | [`multi_tools.plugin`](plugins/multi_tools/3.2/multi_tools.plugin) |
-| Virtual Premium Reactions | 4.0 | [`virtual_premium_reactions.plugin`](plugins/virtual_premium_reactions/4.0/virtual_premium_reactions.plugin) |
+| Virtual Premium Reactions | 4.1.1 | [`virtual_premium_reactions.plugin`](plugins/virtual_premium_reactions/4.1.1/virtual_premium_reactions.plugin) |
 
 Отдельная сборка MultiTools без функции удалённых сообщений лежит в [`plugins/multi_tools/3.3-bez-udalennyh`](plugins/multi_tools/3.3-bez-udalennyh).
 
