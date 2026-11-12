@@ -101,6 +101,12 @@ WARM_DOCS_MAX = 64
 RESYNC_DELAYS_MS = (400, 1500)
 RESYNC_MAX_VIEWS = 600
 
+KEYS_FILE = "sync_keys.json"
+MAX_KEY_TRACK = 4000
+MAX_KEY_SAVED = 3000
+MAX_KEYS_PER_MESSAGE = 4
+EDIT_RESYNC_DELAYS_MS = (600, 1800, 4000)
+
 def _find_animated_document(account: int, document_id: int):
     try:
         from org.telegram.ui.Components import AnimatedEmojiDrawable
@@ -350,7 +356,8 @@ class _VPRSync:
                         self.cache[(me, k)] = (time.monotonic(), docs)
                         self.shown.setdefault((me, k), docs)
                         keys.add(k)
-                        changed.extend(t for t, (v, _) in self.visible.items() if t[:2] == current[:2] and v[4] == k)
+                        changed.extend(t for t, (v, _) in self.visible.items() if t[:2] == current[:2]
+                                       and (v[4] == k or k in self._aliases(t)))
             for target in set(changed):
                 self.plugin._sync_refresh(target, self)
         except Exception:
@@ -426,6 +433,12 @@ class _VPRSync:
         raw = None if value is None else json.dumps(value,separators=(',',':'),allow_nan=False).encode()
         result = self._http(self.origin+path, method, raw)
         return own,result
+    def _aliases(self, target):
+        try:
+            return self.plugin._vpr_keys_of(target)
+        except Exception:
+            return []
+
     def _enqueue(self, cachekey, priority=False):
         with self.lock:
             if not self.active or self.mode != 'legacy':
@@ -758,6 +771,9 @@ class _VPRSync:
             for k, (v, _) in self.visible.items():
                 if k[:2] == current[:2]:
                     by_key.setdefault(v[4], []).append(k)
+                    for alias in self._aliases(k):
+                        if alias != v[4]:
+                            by_key.setdefault(alias, []).append(k)
             for key in touched:
                 docs = self._tree_docs(self.tree.get(key), me)
                 old = before.get((me, key)) or self.cache.get((me, key))
@@ -878,7 +894,8 @@ class _VPRSync:
                 else:
                     self.shown.pop((me, key), None)
                 if old is None or old[1] != docs:
-                    changed.extend(k for k, (v, _) in self.visible.items() if v[3] == me and v[4] == key)
+                    changed.extend(k for k, (v, _) in self.visible.items()
+                                   if v[3] == me and (v[4] == key or key in self._aliases(k)))
         except Exception as error:
             with self.lock:
                 old = self.cache.get((me, key))
@@ -1076,9 +1093,6 @@ class _VPRClick(dynamic_proxy(_VPRView.OnClickListener)):
             self.fn(view)
         except Exception:
             pass
-
-
-# --- Manual, user-confirmed updater (same module as MultiTools 3.2) ---
 
 
 def on_ui_thread():
@@ -1855,6 +1869,11 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
         self._vpr_predicted = {}
         self._vpr_recheck = {}
         self._vpr_warmed = set()
+        self._vpr_key_hist = {}
+        self._vpr_key_lock = threading.Lock()
+        self._vpr_key_file_lock = threading.Lock()
+        self._vpr_keys_dirty = False
+        self._vpr_keys_save_pending = False
 
     def on_plugin_load(self) -> None:
         self._reset_state()
@@ -1865,6 +1884,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
             self._refresh_config()
         self._load_store()
         self._vpr_load_peers()
+        self._vpr_load_keys()
         self._cleanup(force=True)
         self._install_hooks()
         self._sync_configure()
@@ -1881,6 +1901,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
             pass
         self._flush_now()
         self._vpr_flush_peers()
+        self._vpr_flush_keys()
 
         self._unloaded = True
         self._live = {}
@@ -1897,6 +1918,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
                 self._cleanup(force=True)
                 self._flush_now()
                 self._vpr_flush_peers()
+                self._vpr_flush_keys()
                 if self._sync is not None: self._sync.leave()
         except Exception:
             pass
@@ -2066,6 +2088,9 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
                 text = str(text).strip() if text is not None else ''
                 tag = hashlib.sha256(text.encode('utf-8', 'surrogatepass')).hexdigest()[:2]
                 raw = 'p2:{}:{}:{}:{}:{}'.format(min(me,other),max(me,other),date,sender,tag)
+                key = hashlib.sha256(raw.encode('utf-8')).hexdigest()[:32]
+                self._vpr_note_key((account, dialog, mid), key)
+                return account,dialog,mid,me,key
             elif isinstance(peer,TLRPC.TL_peerChat):
                 chat_id=int(peer.chat_id)
                 if dialog >= 0 or chat_id <= 0: return None
@@ -2147,7 +2172,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
             with sync.lock:
                 clash = any(k != target and k[:2] == target[:2] and v[0][4] == key
                             for k, v in sync.visible.items())
-            entries = sync.last(me, key) if clash else sync.get(me, key)
+            entries = self._sync_entries(sync, desc, clash)
             if not entries and (dialog <= 0 or clash):
                 return
             layout = param.thisObject
@@ -2166,7 +2191,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
                 return
             docs = sorted({d for d, _f in entries})
             if len(docs) != 1:
-                remembered = sync.last(me, key)
+                remembered = self._sync_entries(sync, desc, True)
                 if len({d for d, _f in remembered}) == 1:
                     entries = remembered
                     docs = [remembered[0][0]]
@@ -2344,7 +2369,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
         if desc is None:
             return None
         _account, dialog, _mid, me, key = desc
-        entries = sync.get(me, key)
+        entries = self._sync_entries(sync, desc)
         if not entries and dialog > 0:
             entries = self._vpr_predicted_entries(desc)
         if not entries:
@@ -2408,6 +2433,172 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
         self._remember_live(account, dialog, mid, message_object)
         sync.observe(*desc)
         sync.publish(me, key, doc, revision, target, fallback if doc is not None else None)
+        for old_key in self._vpr_keys_of(target):
+            if old_key != key:
+                sync.publish(me, old_key, None, revision, target)
+
+
+    def _vpr_note_key(self, target, key) -> None:
+        try:
+            lock = getattr(self, "_vpr_key_lock", None)
+            if lock is None or not isinstance(key, str):
+                return
+            save = False
+            with lock:
+                hist = self._vpr_key_hist.get(target)
+                if hist and hist[-1] == key:
+                    return
+                hist = list(hist) if hist else []
+                self._vpr_key_hist.pop(target, None)
+                if key in hist:
+                    hist.remove(key)
+                hist.append(key)
+                del hist[:-MAX_KEYS_PER_MESSAGE]
+                self._vpr_key_hist[target] = hist
+                if len(hist) > 1:
+                    self._vpr_keys_dirty = True
+                    save = True
+                overflow = len(self._vpr_key_hist) - MAX_KEY_TRACK
+                if overflow > 0:
+                    singles = [t for t, v in islice(self._vpr_key_hist.items(), overflow * 4) if len(v) < 2]
+                    for extra in singles[:overflow]:
+                        self._vpr_key_hist.pop(extra, None)
+                    overflow = len(self._vpr_key_hist) - MAX_KEY_TRACK
+                    if overflow > 0:
+                        for extra in list(islice(self._vpr_key_hist, overflow)):
+                            self._vpr_key_hist.pop(extra, None)
+            if save:
+                self._vpr_log("sync: message text changed, previous reaction key kept")
+                self._vpr_schedule_keys_save()
+        except Exception:
+            pass
+
+    def _vpr_keys_of(self, target) -> List[str]:
+        lock = getattr(self, "_vpr_key_lock", None)
+        if lock is None:
+            return []
+        with lock:
+            hist = self._vpr_key_hist.get(target)
+            return list(hist) if hist else []
+
+    def _sync_entries(self, sync, desc, remembered: bool = False):
+        account, dialog, mid, me, key = desc
+        read = sync.last if remembered else sync.get
+        entries = read(me, key)
+        if entries or dialog <= 0:
+            return entries
+        for old_key in reversed(self._vpr_keys_of((account, dialog, mid))):
+            if old_key == key:
+                continue
+            entries = read(me, old_key)
+            if entries:
+                return entries
+            try:
+                with sync.lock:
+                    missing = sync.mode == 'legacy' and (me, old_key) not in sync.cache
+                if missing:
+                    sync._enqueue((me, old_key), True)
+            except Exception:
+                pass
+        return []
+
+    def _vpr_keys_path(self) -> str:
+        folder = os.path.join(get_plugins_dir(), "virtual_premium_reactions")
+        ensure_dir_exists(folder)
+        return os.path.join(folder, KEYS_FILE)
+
+    def _vpr_load_keys(self) -> None:
+        hist = {}
+        try:
+            path = self._vpr_keys_path()
+            if os.path.exists(path) and os.path.getsize(path) <= 2097152:
+                with open(path, "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+                items = data.get("keys") if isinstance(data, dict) and data.get("v") == 1 else None
+                if isinstance(items, dict):
+                    for name, keys in list(items.items())[:MAX_KEY_SAVED]:
+                        try:
+                            account, dialog, mid = (int(x) for x in str(name).split("|"))
+                        except Exception:
+                            continue
+                        if account < 0 or dialog <= 0 or mid <= 0 or not isinstance(keys, list):
+                            continue
+                        keys = [k for k in keys if isinstance(k, str) and re.fullmatch(r"[0-9a-f]{32}", k)]
+                        if len(keys) > 1:
+                            hist[(account, dialog, mid)] = keys[-MAX_KEYS_PER_MESSAGE:]
+        except Exception:
+            hist = {}
+        with self._vpr_key_lock:
+            self._vpr_key_hist = hist
+            self._vpr_keys_dirty = False
+
+    def _vpr_flush_keys(self) -> None:
+        lock = getattr(self, "_vpr_key_lock", None)
+        if lock is None:
+            return
+        with lock:
+            if not self._vpr_keys_dirty:
+                return
+            self._vpr_keys_dirty = False
+            items = [(t, v) for t, v in self._vpr_key_hist.items() if len(v) > 1][-MAX_KEY_SAVED:]
+        payload = {"v": 1, "keys": {"{}|{}|{}".format(*t): list(v) for t, v in items}}
+        with self._vpr_key_file_lock:
+            tmp = None
+            try:
+                path = self._vpr_keys_path()
+                tmp = path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as handle:
+                    json.dump(payload, handle, separators=(",", ":"))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp, path)
+                tmp = None
+            except Exception:
+                with lock:
+                    self._vpr_keys_dirty = True
+            finally:
+                if tmp is not None:
+                    try:
+                        os.remove(tmp)
+                    except Exception:
+                        pass
+
+    def _vpr_schedule_keys_save(self) -> None:
+        with self._vpr_key_lock:
+            if self._vpr_keys_save_pending:
+                return
+            self._vpr_keys_save_pending = True
+
+        def task():
+            with self._vpr_key_lock:
+                self._vpr_keys_save_pending = False
+            if not self._unloaded:
+                self._vpr_flush_keys()
+        try:
+            run_on_queue(task, PLUGINS_QUEUE, 2000)
+        except Exception:
+            with self._vpr_key_lock:
+                self._vpr_keys_save_pending = False
+
+    def _vpr_sync_on_edit(self, account, update) -> None:
+
+        try:
+            sync = self._sync
+            if sync is None or not sync.active or update is None or update.message is None:
+                return
+            message = update.message
+            target = (int(account), int(MessageObject.getDialogId(message)), int(message.id))
+            if target[1] <= 0:
+                return
+            old = self._live.get(target)
+            if old is not None:
+                self._sync_descriptor(old)
+            if not self._vpr_keys_of(target):
+                return
+            for delay in EDIT_RESYNC_DELAYS_MS:
+                self._ui_later(self._resync_visible, delay, "resync after edit")
+        except Exception:
+            pass
 
     def _ui_later(self, fn, delay_ms: int, where: str = "ui task") -> None:
         def runner():
@@ -4233,7 +4424,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
             pass
 
     def _vpr_try_merge(self, reactions, results, real_key, local_key, account, dialog_id, message_id):
-        # Private chat: both sides reacted with the same real emoji -> one pill (mine), both avatars.
+
         if results is None or int(dialog_id) <= 0 or not real_key or not local_key or real_key == local_key:
             return None
         target = (int(account), int(dialog_id), int(message_id))
@@ -4298,7 +4489,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
         return True
 
     def _vpr_effect_before(self, param) -> None:
-        # The fly/burst animation must use the emoji the pill actually shows.
+
         if not self._cfg.get('enabled'):
             return
         args = param.args
@@ -4341,7 +4532,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
             args[6] = new_visible
 
     def _vpr_lookup_after(self, param) -> None:
-        # Lets the animation find a pill whose picture was swapped to a custom emoji.
+
         try:
             if param.getResult() is not None:
                 return
@@ -4429,12 +4620,6 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
             self._remember_live(account, dialog_id, message_id, message_object)
         return changed
 
-    # --- 4.1.1: keep the virtual reaction when a message is edited ---------------------
-    # After an edit the client rebuilds the message from server data in which the user's
-    # own reaction can arrive without the "chosen" flag. 4.1 read that as "removed on another
-    # device" and dropped the record after STALE_GRACE, so the standard reaction replaced the
-    # virtual one. Now such a state drops the record only when a fresh full (non-min) server
-    # answer, received after we asked for it, confirms that the reaction is really gone.
 
     def _vpr_log(self, text: str, *args) -> None:
         try:
@@ -4495,7 +4680,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
             self._vpr_request_full(msg)
         changed = False
         if real_entry is not None and not inflight and int(real_entry.count) > 0:
-            # the user's own real reaction is still counted here, it only lost the chosen flag
+
             self._unchoose(results, real_entry)
             changed = True
         _entry, added = self._ensure_chosen(results, local_key)
@@ -4533,55 +4718,19 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
             if len(edits) > 256:
                 edits.clear()
             edits[msg] = time.time()
-            # 4.1.2: keep the reactions block the client already has, so the edit cannot wipe it
-            try:
-                live = self._live.get(msg)
-                prev = live.messageOwner.reactions if live is not None and live.messageOwner is not None else None
-                if prev is not None:
-                    cur = message.reactions
-                    if cur is None or self._is_min(cur) or not self._vpr_has_chosen(cur):
-                        message.reactions = prev
-                        message.flags = int(message.flags) | 1048576
-                        self._vpr_log("edit: kept previous reactions on the edited message")
-            except Exception:
-                self._vpr_log("edit: could not keep previous reactions")
-            def _redraw(m=msg):
-                try:
-                    obj = self._live.get(m)
-                    if obj is not None:
-                        self._sync_display(obj)
-                        self._refresh_message(m[0], m[1], m[2], obj)
-                except Exception:
-                    self._vpr_log("edit: redraw failed")
-            for _d in (300, 1500, 3000):
-                try:
-                    run_on_ui_thread(_redraw, _d)
-                except Exception:
-                    pass
             self._vpr_log("edit of a message with a virtual reaction: refresh scheduled")
             try:
-                run_on_ui_thread(lambda: self._vpr_request_full(msg), EDIT_REFRESH_DELAY_MS)
+                run_on_ui_thread(lambda: self._vpr_request_full(msg), delay=EDIT_REFRESH_DELAY_MS)
             except Exception:
                 self._vpr_request_full(msg)
         except Exception:
             pass
-
-    def _vpr_has_chosen(self, reactions) -> bool:
-        try:
-            res = reactions.results
-            for i in range(int(res.size())):
-                if bool(res.get(i).chosen):
-                    return True
-        except Exception:
-            pass
-        return False
 
     def _vpr_request_full(self, msg) -> bool:
         asked = self._vpr_asked_map()
         now = time.time()
         last = asked.get(msg)
         if last is not None and now - last < FULL_RETRY:
-            self._vpr_log("edit: refresh skipped (asked recently)")
             return False
         if len(asked) > 256:
             asked.clear()
@@ -4592,7 +4741,6 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
             request = TLRPC.TL_messages_getMessagesReactions()
             request.peer = controller.getInputPeer(int(dialog_id))
             if request.peer is None:
-                self._vpr_log("edit: no input peer")
                 return False
             request.id.add(Integer(int(message_id)))
         except Exception:
@@ -4632,10 +4780,8 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
                 if account != self._sel_account():
                     return False
                 send_request(request, done)
-            self._vpr_log("edit: reactions refresh sent")
             return True
         except Exception:
-            self._vpr_log("edit: reactions refresh send failed")
             return False
 
     def _apply_virtual_choice(self, results, real_key: str, local_key: str) -> bool:
@@ -4786,7 +4932,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
         self._render_guard_removed(message_object)
 
     def _vpr_adopt_real(self, message_object, local_key, all_key):
-        # Use the same "for all" emoji as the friend, so both reactions are one pill.
+
         try:
             if not local_key or not all_key:
                 return all_key
@@ -4797,7 +4943,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
             if desc is None:
                 return all_key
             _account, dialog, _mid, me, key = desc
-            entries = sync.get(me, key)
+            entries = self._sync_entries(sync, desc)
             if not entries and dialog > 0:
                 entries = self._vpr_predicted_entries(desc)
             if not entries:
@@ -5397,6 +5543,7 @@ class VirtualPremiumReactionsPlugin(BasePlugin):
 
     def on_update_hook(self, update_name: str, account: int, update: Any) -> HookResult:
         if update_name in ("TL_updateEditMessage", "TL_updateEditChannelMessage"):
+            self._vpr_sync_on_edit(account, update)
             self._vpr_on_edit(account, update)
             return HookResult()
         if update_name != "TL_updateMessageReactions":
